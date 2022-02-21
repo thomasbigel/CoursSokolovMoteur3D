@@ -1,5 +1,7 @@
 # CoursSokolovMoteur3D
 
+Follow https://github.com/ssloy/tinyrenderer lessons
+
 ## Requirement
 
 - c/c++ compiler
