@@ -53,7 +53,48 @@ struct Shader : public IShader {
         float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
         float diff = std::max(0.f, n*l);
         TGAColor c = model->diffuse(uv);
-        for (int i=0; i<3; i++) color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec), 255);
+        for (int i=0; i<3; i++) 
+            color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec), 255);
+        return false;
+    }
+};
+
+struct GlowShader : public IShader{
+    mat<4,4,float> uniform_M;   //  Projection*ModelView
+    mat<4,4,float> uniform_MIT; // (Projection*ModelView).invert_transpose()
+    mat<4,4,float> uniform_Mshadow; // transform framebuffer screen coordinates to shadowbuffer screen coordinates
+    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
+    mat<3,3,float> varying_tri; // triangle coordinates before Viewport transform, written by VS, read by FS
+
+    GlowShader(Matrix M, Matrix MIT, Matrix MS) : uniform_M(M), uniform_MIT(MIT), uniform_Mshadow(MS), varying_uv(), varying_tri() {}
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
+        Vec4f gl_Vertex = Viewport*Projection*ModelView*embed<4>(model->vert(iface, nthvert));
+        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
+        return gl_Vertex;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        Vec4f sb_p = uniform_Mshadow*embed<4>(varying_tri*bar); // corresponding point in the shadow buffer
+        sb_p = sb_p/sb_p[3];
+        int idx = int(sb_p[0]) + int(sb_p[1])*width; // index in the shadowbuffer array
+        float shadow = .3+.7*(shadowbuffer[idx]<sb_p[2]+43.34); // magic coeff to avoid z-fighting
+        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
+        Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize(); // normal
+        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize(); // light vector
+        Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
+        float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
+        float diff = std::max(0.f, n*l);
+        TGAColor c = model->diffuse(uv);
+
+        Vec3f glow_light(0, 25, 25);
+        TGAColor glow_color = model->glow_value(uv);
+        if(glow_color[0]==0 && glow_color[1]==0 && glow_color[2]==0)return true;
+
+
+        for (int i=0; i<3; i++) 
+            color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec) + glow_color[i] * glow_light[i], 255);
         return false;
     }
 };
@@ -95,6 +136,7 @@ int main(int argc, char** argv) {
     for (int m=1; m<argc; m++) {
         std::string nom("frame");
         std::string nomShadow("depth");
+        std::string nomGlow("glow");
         std::string ms= std::to_string(m);
         std::string extensionImage(".tga");
         model = new Model(argv[m]);
@@ -131,9 +173,29 @@ int main(int argc, char** argv) {
             triangle(screen_coords, shader, frame, zbuffer);
             triangle(screen_coords, shader, imageOutput, zbuffer);
         }
-        delete model;
         frame.flip_vertically(); // to place the origin in the bottom left corner of the image
         frame.write_tga_file((nom + ms + extensionImage).c_str());
+    
+        //Shader glow
+        if(model->gloawmapLoaded()){
+            TGAImage frameGlow(width, height, TGAImage::RGB);
+            GlowShader glowShader(ModelView, (Projection*ModelView).invert_transpose(), M*(Viewport*Projection*ModelView).invert());
+            Vec4f screen_coords_glow[3];
+            for (int i=0; i<model->nfaces(); i++) {
+                for (int j=0; j<3; j++) {
+                    screen_coords_glow[j] = glowShader.vertex(i, j);
+                }
+                triangle(screen_coords_glow, glowShader, frameGlow, zbuffer);
+                triangle(screen_coords_glow, glowShader, imageOutput, zbuffer);
+            }
+            frameGlow.flip_vertically(); // to place the origin in the bottom left corner of the image
+            frameGlow.write_tga_file((nomGlow + ms + extensionImage).c_str());
+        }
+        
+        
+            
+        delete model;
+        
     }
     imageOutput.flip_vertically(); // to place the origin in the bottom left corner of the image
     imageOutput.write_tga_file("output.tga");

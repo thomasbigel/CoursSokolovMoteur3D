@@ -14,12 +14,14 @@ private:
     TGAImage diffusemap_;
     TGAImage normalmap_;
     TGAImage specularmap_;
+    TGAImage glowmap_;
     void load_texture(std::string filename, const char *suffix, TGAImage &img);
 public:
     Model(const char *filename);
     ~Model();
     int nverts();
     int nfaces();
+    bool gloawmapLoaded();
     Vec3f normal(int iface, int nthvert);
     Vec3f normal(Vec2f uv);
     Vec3f vert(int i);
@@ -27,6 +29,7 @@ public:
     Vec2f uv(int iface, int nthvert);
     TGAColor diffuse(Vec2f uv);
     float specular(Vec2f uv);
+    TGAColor glow_value(Vec2f uv);
     std::vector<int> face(int idx);
 };
 #endif //__MODEL_H__
