@@ -1,7 +1,7 @@
 SYSCONF_LINK = g++
-CPPFLAGS     = -fopenmp -Wall -Wextra -Weffc++ -pedantic
-LDFLAGS      = -fopenmp -O3
-LIBS         = -lm
+CPPFLAGS     =
+LDFLAGS      =
+LIBS         = -lm -lGL -lGLEW -lglut -lGLU
 
 DESTDIR = ./
 TARGET  = main
@@ -19,4 +19,4 @@ $(OBJECTS): %.o: %.cpp
 clean:
 	-rm -f $(OBJECTS)
 	-rm -f $(TARGET)
-	-rm -f *.tga
+

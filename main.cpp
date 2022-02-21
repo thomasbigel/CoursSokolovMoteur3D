@@ -1,207 +1,184 @@
+#include <GL/glew.h>
+#include <GL/glu.h>
+#include <GL/glut.h>
+#include <iostream>
+#include <fstream>
 #include <vector>
 #include <cmath>
-#include <cstdlib>
-#include <limits>
-#include "tgaimage.h"
-#include "model.h"
-#include "geometry.h"
-#include "our_gl.h"
-#include <iostream>
-#include <string>
 
-const TGAColor white = TGAColor(255, 255, 255);
-const TGAColor red   = TGAColor(255, 0,   0);
-const TGAColor green = TGAColor(0,   255, 0);
-const TGAColor blue  = TGAColor(0,   0,   255);
-const int width  = 800; 
-const int height = 800; 
-const float depth  = 2000.f;
-Model *model = NULL;
-float *zbuffer = NULL;
-float *shadowbuffer = NULL;
+#define ROTATE 0
+#define RENDER_SPHERES_INSTEAD_OF_VERTICES 0
+GLuint  prog_hdlr;
+GLint location_attribute_0, location_viewport;
 
-Vec3f light_dir(1,1,0);
-Vec3f       eye(1,1,4);
-Vec3f    center(0,0,0);
-Vec3f        up(0,1,0);
+const int NATOMS        = 10000;
+const int SCREEN_WIDTH  = 1024;
+const int SCREEN_HEIGHT = 1024;
+const float camera[]           = {.6,0,1};
+const float light0_position[4] = {1,1,1,0};
+std::vector<std::vector<float> > atoms;
+float angle = 0.72;
 
-struct Shader : public IShader {
-    mat<4,4,float> uniform_M;   //  Projection*ModelView
-    mat<4,4,float> uniform_MIT; // (Projection*ModelView).invert_transpose()
-    mat<4,4,float> uniform_Mshadow; // transform framebuffer screen coordinates to shadowbuffer screen coordinates
-    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
-    mat<3,3,float> varying_tri; // triangle coordinates before Viewport transform, written by VS, read by FS
+float rand_minus_one_one() {
+	return (float)rand()/(float)RAND_MAX*(rand()>RAND_MAX/2?1:-1);
+}
 
-    Shader(Matrix M, Matrix MIT, Matrix MS) : uniform_M(M), uniform_MIT(MIT), uniform_Mshadow(MS), varying_uv(), varying_tri() {}
+float rand_zero_one() {
+	return (float)rand()/(float)RAND_MAX;
+}
 
-    virtual Vec4f vertex(int iface, int nthvert) {
-        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
-        Vec4f gl_Vertex = Viewport*Projection*ModelView*embed<4>(model->vert(iface, nthvert));
-        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
-        return gl_Vertex;
-    }
+float cur_camera[] = {0,0,0};
 
-    virtual bool fragment(Vec3f bar, TGAColor &color) {
-        Vec4f sb_p = uniform_Mshadow*embed<4>(varying_tri*bar); // corresponding point in the shadow buffer
-        sb_p = sb_p/sb_p[3];
-        int idx = int(sb_p[0]) + int(sb_p[1])*width; // index in the shadowbuffer array
-        float shadow = .3+.7*(shadowbuffer[idx]<sb_p[2]+43.34); // magic coeff to avoid z-fighting
-        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
-        Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize(); // normal
-        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize(); // light vector
-        Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
-        float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
-        float diff = std::max(0.f, n*l);
-        TGAColor c = model->diffuse(uv);
-        for (int i=0; i<3; i++) 
-            color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec), 255);
-        return false;
-    }
-};
+void render_scene(void) {
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glLoadIdentity();
+	cur_camera[0] = cos(angle)*camera[0]+sin(angle)*camera[2];
+	cur_camera[1] = camera[1];
+	cur_camera[2] = cos(angle)*camera[2]-sin(angle)*camera[0];
+#if ROTATE
+	angle+=0.01;
+#endif
+	gluLookAt(cur_camera[0], cur_camera[1], cur_camera[2], 0,  0, 0, 0, 1, 0);
 
-struct GlowShader : public IShader{
-    mat<4,4,float> uniform_M;   //  Projection*ModelView
-    mat<4,4,float> uniform_MIT; // (Projection*ModelView).invert_transpose()
-    mat<4,4,float> uniform_Mshadow; // transform framebuffer screen coordinates to shadowbuffer screen coordinates
-    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
-    mat<3,3,float> varying_tri; // triangle coordinates before Viewport transform, written by VS, read by FS
+#if RENDER_SPHERES_INSTEAD_OF_VERTICES
+	for (int i=0; i<NATOMS; i++) {
+		glColor3f(atoms[i][4], atoms[i][5], atoms[i][6]);
+		glPushMatrix();
+		glTranslatef(atoms[i][0], atoms[i][1], atoms[i][2]);
+		glutSolidSphere(atoms[i][3], 16, 16);
+		glPopMatrix();
+	}
+#else
+	glUseProgram(prog_hdlr);
+	GLfloat viewport[4];
+	glGetFloatv(GL_VIEWPORT, viewport);
+	glUniform4fv(location_viewport, 1, viewport);
+	glBegin(GL_POINTS);
+	for (int i=0; i<NATOMS; i++) {
+		glColor3f(atoms[i][4], atoms[i][5], atoms[i][6]);
+		glVertexAttrib1f(location_attribute_0, atoms[i][3]);
+		glVertex3f(atoms[i][0], atoms[i][1], atoms[i][2]);
+	}
+	glEnd();
+	glUseProgram(0);
+#endif
 
-    GlowShader(Matrix M, Matrix MIT, Matrix MS) : uniform_M(M), uniform_MIT(MIT), uniform_Mshadow(MS), varying_uv(), varying_tri() {}
+	glutSwapBuffers();
+}
 
-    virtual Vec4f vertex(int iface, int nthvert) {
-        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
-        Vec4f gl_Vertex = Viewport*Projection*ModelView*embed<4>(model->vert(iface, nthvert));
-        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
-        return gl_Vertex;
-    }
+void process_keys(unsigned char key, int x, int y) {
+	if (27==key) {
+		exit(0);
+	}
+}
 
-    virtual bool fragment(Vec3f bar, TGAColor &color) {
-        Vec4f sb_p = uniform_Mshadow*embed<4>(varying_tri*bar); // corresponding point in the shadow buffer
-        sb_p = sb_p/sb_p[3];
-        int idx = int(sb_p[0]) + int(sb_p[1])*width; // index in the shadowbuffer array
-        float shadow = .3+.7*(shadowbuffer[idx]<sb_p[2]+43.34); // magic coeff to avoid z-fighting
-        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
-        Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize(); // normal
-        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize(); // light vector
-        Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
-        float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
-        float diff = std::max(0.f, n*l);
-        TGAColor c = model->diffuse(uv);
+void change_size(int w, int h) {
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+    glViewport(0, 0, w, h);
+	glOrtho(-1,1,-1,1,-2,2);
+	glMatrixMode(GL_MODELVIEW);
+}
 
-        Vec3f glow_light(0, 25, 25);
-        TGAColor glow_color = model->glow_value(uv);
-        if(glow_color[0]==0 && glow_color[1]==0 && glow_color[2]==0)return true;
+#if !RENDER_SPHERES_INSTEAD_OF_VERTICES
+void printInfoLog(GLuint obj) {
+	int log_size = 0;
+	int bytes_written = 0;
+	glGetProgramiv(obj, GL_INFO_LOG_LENGTH, &log_size);
+	if (!log_size) return;
+	char *infoLog = new char[log_size];
+	glGetProgramInfoLog(obj, log_size, &bytes_written, infoLog);
+	std::cerr << infoLog << std::endl;
+	delete [] infoLog;
+}
+
+bool read_n_compile_shader(const char *filename, GLuint &hdlr, GLenum shaderType) {
+	std::ifstream is(filename, std::ios::in|std::ios::binary|std::ios::ate);
+	if (!is.is_open()) {
+		std::cerr << "Unable to open file " << filename << std::endl;
+		return false;
+	}
+	long size = is.tellg();
+	char *buffer = new char[size+1];
+	is.seekg(0, std::ios::beg);
+	is.read (buffer, size);
+	is.close();
+	buffer[size] = 0;
+
+	hdlr = glCreateShader(shaderType);
+	glShaderSource(hdlr, 1, (const GLchar**)&buffer, NULL);
+	glCompileShader(hdlr);
+	std::cerr << "info log for " << filename << std::endl;
+	printInfoLog(hdlr);
+	delete [] buffer;
+	return true;
+}
+
+void setShaders(GLuint &prog_hdlr, const char *vsfile, const char *fsfile) {
+	GLuint vert_hdlr, frag_hdlr;
+	read_n_compile_shader(vsfile, vert_hdlr, GL_VERTEX_SHADER);
+	read_n_compile_shader(fsfile, frag_hdlr, GL_FRAGMENT_SHADER);
+
+	prog_hdlr = glCreateProgram();
+	glAttachShader(prog_hdlr, frag_hdlr);
+	glAttachShader(prog_hdlr, vert_hdlr);
+
+	glLinkProgram(prog_hdlr);
+	std::cerr << "info log for the linked program" << std::endl;
+	printInfoLog(prog_hdlr);
+}
+#endif
 
 
-        for (int i=0; i<3; i++) 
-            color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec) + glow_color[i] * glow_light[i], 255);
-        return false;
-    }
-};
+int main(int argc, char **argv) {
+	for (int i=0; i<NATOMS; i++) {
+		std::vector<float> tmp;
+		for (int c=0; c<3; c++) {
+			tmp.push_back(rand_minus_one_one()/2);      // xyz
+		}
+		tmp.push_back(rand_zero_one()/8.0); // radius
+		for (int c=0; c<3; c++) {
+			tmp.push_back(rand_zero_one()); // rgb
+		}
+		atoms.push_back(tmp);
+	}
 
-struct DepthShader : public IShader {
-    mat<3,3,float> varying_tri;
+	glutInit(&argc, argv);
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+	glutInitWindowPosition(100,100);
+	glutInitWindowSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+	glutCreateWindow("GLSL tutorial");
+	glClearColor(0.0,0.0,1.0,1.0);
 
-    DepthShader() : varying_tri() {}
+	glutDisplayFunc(render_scene);
+	glutReshapeFunc(change_size);
+	glutKeyboardFunc(process_keys);
+	#if ROTATE
+		glutIdleFunc(render_scene);
+	#endif
 
-    virtual Vec4f vertex(int iface, int nthvert) {
-        Vec4f gl_Vertex = embed<4>(model->vert(iface, nthvert)); // read the vertex from .obj file
-        gl_Vertex = Viewport*Projection*ModelView*gl_Vertex;          // transform it to screen coordinates
-        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
-        return gl_Vertex;
-    }
+	glEnable(GL_COLOR_MATERIAL);
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+	glLightfv(GL_LIGHT0, GL_POSITION, light0_position);
 
-    virtual bool fragment(Vec3f bar, TGAColor &color) {
-        Vec3f p = varying_tri*bar;
-        color = TGAColor(255, 255, 255)*(p.z/depth);
-        return false;
-    }
-};
+	#if !RENDER_SPHERES_INSTEAD_OF_VERTICES
+		glewInit();
+		if (GLEW_ARB_vertex_shader && GLEW_ARB_fragment_shader && GL_EXT_geometry_shader4)
+			std::cout << "Ready for GLSL - vertex, fragment, and geometry units" << std::endl;
+		else {
+			std::cout << "No GLSL support" << std::endl;
+			exit(1);
+		}
+		setShaders(prog_hdlr, "shaders/vert_shader.glsl", "shaders/frag_shader.glsl");
 
-int main(int argc, char** argv) {
+		location_attribute_0   = glGetAttribLocation(prog_hdlr, "radius_attr");          // radius
+		location_viewport = glGetUniformLocation(prog_hdlr, "viewport"); // viewport
 
-    if (2>argc) {
-        std::cerr << "Usage: " << argv[0] << " obj/model.obj" << std::endl;
-        return 1;
-    }
+		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+	#endif
 
-    zbuffer = new float[width*height];
-    shadowbuffer   = new float[width*height];
-    for (int i=width*height; i--; zbuffer[i] = shadowbuffer[i] = -std::numeric_limits<float>::max());
-
-    light_dir.normalize();
-
-    TGAImage imageOutput(width, height, TGAImage::RGB);
-
-    for (int m=1; m<argc; m++) {
-        std::string nom("frame");
-        std::string nomShadow("depth");
-        std::string nomGlow("glow");
-        std::string ms= std::to_string(m);
-        std::string extensionImage(".tga");
-        model = new Model(argv[m]);
-
-        //Shadow buffer
-        TGAImage depthImage(width, height, TGAImage::RGB);
-        lookat(light_dir, center, up);
-        viewport(width/8, height/8, width*3/4, height*3/4, depth);
-        projection(0);
-        DepthShader depthshader;
-        Vec4f screen_coords_shadow[3];
-        for (int i=0; i<model->nfaces(); i++) {
-            for (int j=0; j<3; j++) {
-                screen_coords_shadow[j] = depthshader.vertex(i, j);
-            }
-            triangle(screen_coords_shadow, depthshader, depthImage, shadowbuffer);
-        }
-        depthImage.flip_vertically(); // to place the origin in the bottom left corner of the image
-        depthImage.write_tga_file((nomShadow + ms + extensionImage).c_str());
-
-        Matrix M = Viewport*Projection*ModelView;
-        
-        //Shader
-        TGAImage frame(width, height, TGAImage::RGB);
-        lookat(eye, center, up);
-        viewport(width/8, height/8, width*3/4, height*3/4, depth);
-        projection(-1.f/(eye-center).norm());
-        Shader shader(ModelView, (Projection*ModelView).invert_transpose(), M*(Viewport*Projection*ModelView).invert());
-        Vec4f screen_coords[3];
-        for (int i=0; i<model->nfaces(); i++) {
-            for (int j=0; j<3; j++) {
-                screen_coords[j] = shader.vertex(i, j);
-            }
-            triangle(screen_coords, shader, frame, zbuffer);
-            triangle(screen_coords, shader, imageOutput, zbuffer);
-        }
-        frame.flip_vertically(); // to place the origin in the bottom left corner of the image
-        frame.write_tga_file((nom + ms + extensionImage).c_str());
-    
-        //Shader glow
-        if(model->gloawmapLoaded()){
-            TGAImage frameGlow(width, height, TGAImage::RGB);
-            GlowShader glowShader(ModelView, (Projection*ModelView).invert_transpose(), M*(Viewport*Projection*ModelView).invert());
-            Vec4f screen_coords_glow[3];
-            for (int i=0; i<model->nfaces(); i++) {
-                for (int j=0; j<3; j++) {
-                    screen_coords_glow[j] = glowShader.vertex(i, j);
-                }
-                triangle(screen_coords_glow, glowShader, frameGlow, zbuffer);
-                triangle(screen_coords_glow, glowShader, imageOutput, zbuffer);
-            }
-            frameGlow.flip_vertically(); // to place the origin in the bottom left corner of the image
-            frameGlow.write_tga_file((nomGlow + ms + extensionImage).c_str());
-        }
-        
-        
-            
-        delete model;
-        
-    }
-    imageOutput.flip_vertically(); // to place the origin in the bottom left corner of the image
-    imageOutput.write_tga_file("output.tga");
-
-    delete []zbuffer;
-    delete []shadowbuffer;
-
-    return 0;
+	glutMainLoop();
+	return 0;
 }
