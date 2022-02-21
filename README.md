@@ -25,5 +25,5 @@ How to use: ./main (+optional path to model (default used: obj/african_head.obj)
 ```bash
 ./main
 ```
-![image output](https://github.com/thomasbigel/CoursSokolovMoteur3D/blob/readmeImage/Lesson3Texture/output.png)
+![image output](https://github.com/thomasbigel/CoursSokolovMoteur3D/blob/readmeImage/Lesson4/output.png)
 
