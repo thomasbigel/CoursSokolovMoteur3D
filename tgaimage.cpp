@@ -354,4 +354,3 @@ bool TGAImage::scale(int w, int h) {
     height = h;
     return true;
 }
-
