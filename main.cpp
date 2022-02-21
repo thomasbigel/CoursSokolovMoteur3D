@@ -17,7 +17,8 @@ const int depth  = 255;
 Model *model = NULL;
 float *zbuffer = new float[width*height];
 
-Vec3f camera(0,0,3);
+Vec3f eye(1,1,3);
+Vec3f center(0,0,0);
 
 Vec3f m2v(Matrix m) {
     return Vec3f(m[0][0]/m[3][0], m[1][0]/m[3][0], m[2][0]/m[3][0]);
@@ -42,6 +43,20 @@ Matrix viewport(int x, int y, int w, int h) {
     m[1][1] = h/2.f;
     m[2][2] = depth/2.f;
     return m;
+}
+
+Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
+    Vec3f z = (eye-center).normalize();
+    Vec3f x = (up^z).normalize();
+    Vec3f y = (z^x).normalize();
+    Matrix res = Matrix::identity(4);
+    for (int i=0; i<3; i++) {
+        res[0][i] = x[i];
+        res[1][i] = y[i];
+        res[2][i] = z[i];
+        res[i][3] = -center[i];
+    }
+    return res;
 }
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor &color) { 
@@ -97,7 +112,7 @@ Vec3f barycentric(Vec3f *pts, Vec3f P) {
     return Vec3f(1.f-(u.x+u.y)/u.z, u.y/u.z, u.x/u.z); 
 } 
 
-void triangle(Vec3f *pts, TGAImage &image, float intensity, Vec2i *uv) {
+void triangle(Vec3f *pts, TGAImage &image, float *intensity, float *zbuffer) {
     Vec2f bboxmin(image.get_width()-1,  image.get_height()-1); 
     Vec2f bboxmax(0, 0); 
     Vec2f clamp(image.get_width()-1, image.get_height()-1); 
@@ -133,12 +148,15 @@ void triangle(Vec3f *pts, TGAImage &image, float intensity, Vec2i *uv) {
             for(int i=0; i<3; i++){
                 P.z += pts[i][2] * bary_point[i];
             }
-            uvP.x = bary_point.x * uv[0].x + bary_point.y * uv[1].x + bary_point.z * uv[2].x;
-            uvP.y = bary_point.x * uv[0].y + bary_point.y * uv[1].y + bary_point.z * uv[2].y;
+            float ityP0 = bary_point.x * intensity[0] + bary_point.y * intensity[0] + bary_point.z * intensity[0];
+            float ityP1 = bary_point.x * intensity[1] + bary_point.y * intensity[1] + bary_point.z * intensity[1];
+            float ityP2 = bary_point.x * intensity[2] + bary_point.y * intensity[2] + bary_point.z * intensity[2];
+            
+
+            float ityP = bary_point.x * intensity[0] + bary_point.y * intensity[1] + bary_point.z * intensity[2];
             if(zbuffer[int(P.x + P.y * width)] < P.z){
                 zbuffer[int(P.x + P.y * width)] = P.z;
-                TGAColor color = model->diffuse(uvP);
-                image.set(P.x, P.y, TGAColor(color.r*intensity, color.g*intensity, color.b*intensity, 255));
+                image.set(P.x, P.y, TGAColor(255*ityP, 255*ityP, 255*ityP, 255));
             }
 
         }
@@ -168,9 +186,16 @@ int main(int argc, char** argv) {
 
     for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
+    Matrix ModelView  = lookat(eye, center, Vec3f(0,1,0));
     Matrix Projection = Matrix::identity(4);
     Matrix ViewPort   = viewport(width/8, height/8, width*3/4, height*3/4);
-    Projection[3][2] = -1.f/camera.z;
+    Projection[3][2] = -1.f/(eye-center).norm();
+
+    std::cerr << ModelView << std::endl;
+    std::cerr << Projection << std::endl;
+    std::cerr << ViewPort << std::endl;
+    Matrix z = (ViewPort*Projection*ModelView);
+    std::cerr << z << std::endl;
 
     TGAImage image(width, height, TGAImage::RGB);
     Vec3f light_dir(0,0,-1);
@@ -178,22 +203,15 @@ int main(int argc, char** argv) {
         std::vector<int> face = model->face(i);
         Vec3f screen_coords[3];
         Vec3f world_coords[3];
+        float intensity[3];
         for (int j=0; j<3; j++) {
             Vec3f v = model->vert(face[j]);
             //screen_coords[j] = Vec3f(int((v.x+1.)*width/2.+.5), int((v.y+1.)*height/2.+.5), v.z);
-            screen_coords[j] =  m2v(ViewPort*Projection*v2m(v));
+            screen_coords[j] =  Vec3f(ViewPort*Projection*ModelView*Matrix(v));
             world_coords[j]  = v;
+            intensity[j] = model->norm(i, j)*light_dir;
         }
-        Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
-        n.normalize();
-        float intensity = n*light_dir;
-        if (intensity>0) {
-            Vec2i uv[3];
-            for (int k=0; k<3; k++) {
-                uv[k] = model->uv(i, k);
-            }
-            triangle(screen_coords, image, intensity, uv);
-        }
+        triangle(screen_coords, image, intensity, zbuffer);
     }
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
@@ -202,7 +220,7 @@ int main(int argc, char** argv) {
         TGAImage zbimage(width, height, TGAImage::GRAYSCALE);
         for (int i=0; i<width; i++) {
             for (int j=0; j<height; j++) {
-                zbimage.set(i, j, TGAColor(zbuffer[i+j*width], 1));
+                zbimage.set(i, j, TGAColor(zbuffer[i+j*width]));
             }
         }
         zbimage.flip_vertically(); // i want to have the origin at the left bottom corner of the image
