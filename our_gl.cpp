@@ -247,31 +247,23 @@ void triangle(Vec4f *pts, IShader &shader, TGAImage &image, TGAImage &zbuffer) {
 }
 
 void triangle(Vec4f *pts, IShader &shader, TGAImage &image, float *zbuffer) {
+    Vec2f pts2[3] = { proj<2>(pts[0]/pts[0][3]), proj<2>(pts[1]/pts[1][3]), proj<2>(pts[2]/pts[2][3]) };  // triangle screen coordinates after  perps. division
+    
     Vec2f bboxmin( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
     Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+    Vec2f clamp(image.get_width()-1, image.get_height()-1);
     for (int i=0; i<3; i++) {
         for (int j=0; j<2; j++) {
-            bboxmin[j] = std::min(bboxmin[j], pts[i][j]/pts[i][3]);
-            bboxmax[j] = std::max(bboxmax[j], pts[i][j]/pts[i][3]);
+            bboxmin[j] = std::max(0.f,      std::min(bboxmin[j], pts2[i][j]));
+            bboxmax[j] = std::min(clamp[j], std::max(bboxmax[j], pts2[i][j]));
         }
     }
     Vec2i P;
     TGAColor color;
-    //float xBboxmin = bboxmin.x;
-    int xBboxmax = bboxmax.x;
 
     //loop sur les points à l'interieur de la box 2D du triangle
-    #pragma omp parallel for
-    for (int x=bboxmin.x; x<=xBboxmax; x++) { 
-        //recree variable pour parallel
-        Vec2i P; 
-        P.x = x;
-        int yBboxmax = bboxmax.y;
-        for (int y=bboxmin.y; y<=yBboxmax; y++) {
-            //recree variable pour parallel
-            Vec2i P; 
-            P.x = x;
-            P.y = y;
+    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
+        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
 
             Vec3f c = barycentric(proj<2>(pts[0]/pts[0][3]), proj<2>(pts[1]/pts[1][3]), proj<2>(pts[2]/pts[2][3]), proj<2>(P));
             float z = pts[0][2]*c.x + pts[1][2]*c.y + pts[2][2]*c.z;
@@ -286,48 +278,6 @@ void triangle(Vec4f *pts, IShader &shader, TGAImage &image, float *zbuffer) {
         }
     }
 }
-
-void triangleGlow(float offSet, Vec4f *pts, IShader &shader, TGAImage &image, float *zbuffer) {
-    Vec2f bboxmin( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
-    Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-    for (int i=0; i<3; i++) {
-        for (int j=0; j<2; j++) {
-            bboxmin[j] = std::min(bboxmin[j], pts[i][j]/pts[i][3]);
-            bboxmax[j] = std::max(bboxmax[j], pts[i][j]/pts[i][3]);
-        }
-    }
-    Vec2i P;
-    TGAColor color;
-    //float xBboxmin = bboxmin.x;
-    int xBboxmax = bboxmax.x;
-
-    //loop sur les points à l'interieur de la box 2D du triangle
-    #pragma omp parallel for
-    for (int x=bboxmin.x; x<=xBboxmax; x++) { 
-        //recree variable pour parallel
-        Vec2i P; 
-        P.x = x;
-        int yBboxmax = bboxmax.y;
-        for (int y=bboxmin.y; y<=yBboxmax; y++) {
-            //recree variable pour parallel
-            Vec2i P; 
-            P.x = x;
-            P.y = y;
-
-            Vec3f c = barycentric(proj<2>(pts[0]/pts[0][3]), proj<2>(pts[1]/pts[1][3]), proj<2>(pts[2]/pts[2][3]), proj<2>(P));
-            float z = pts[0][2]*c.x + pts[1][2]*c.y + pts[2][2]*c.z;
-            float w = pts[0][3]*c.x + pts[1][3]*c.y + pts[2][3]*c.z;
-            int frag_depth = z/w;
-            if (c.x<0 || c.y<0 || c.z<0 || zbuffer[P.x+P.y*image.get_width()]>frag_depth) continue;
-            bool discard = shader.fragment(c, color);
-            if (!discard) {
-                zbuffer[P.x+P.y*image.get_width()] = frag_depth;
-                image.set(P.x+offSet, P.y+offSet, color);
-            }
-        }
-    }
-}
-
 
 
 void triangle(mat<4,3,float> &clipc, IShader &shader, TGAImage &image, float *zbuffer) {
@@ -346,23 +296,9 @@ void triangle(mat<4,3,float> &clipc, IShader &shader, TGAImage &image, float *zb
     }
     Vec2i P;
     TGAColor color;
-    //float xBboxmin = bboxmin.x;
-    int xBboxmax = bboxmax.x;
-
     //loop sur les points à l'interieur de la box 2D du triangle
-    #pragma omp parallel for
-    for (int x=bboxmin.x; x<=xBboxmax; x++) { 
-        //recree variable pour parallel
-        Vec2i P; 
-        P.x = x;
-        int yBboxmax = bboxmax.y;
-        #pragma omp parallel for
-        for (int y=bboxmin.y; y<=yBboxmax; y++) {
-            //recree variable pour parallel
-            Vec2i P; 
-            P.x = x;
-            P.y = y;
-            
+    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
+        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {  
             Vec3f bc_screen  = barycentric(pts2[0], pts2[1], pts2[2], P);
             Vec3f bc_clip    = Vec3f(bc_screen.x/pts[0][3], bc_screen.y/pts[1][3], bc_screen.z/pts[2][3]);
             bc_clip = bc_clip/(bc_clip.x+bc_clip.y+bc_clip.z);
