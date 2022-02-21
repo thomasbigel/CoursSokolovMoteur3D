@@ -25,5 +25,5 @@ How to use: ./main (+optional path to model (default used: obj/african_head.obj)
 ```bash
 ./main
 ```
-![image output](./output.tga)
+![image output](https://github.com/thomasbigel/CoursSokolovMoteur3D/blob/readmeImage/Lesson2/output.png)
 
